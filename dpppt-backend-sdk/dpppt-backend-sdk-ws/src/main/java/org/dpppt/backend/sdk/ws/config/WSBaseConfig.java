@@ -28,6 +28,7 @@ import org.dpppt.backend.sdk.data.gaen.GAENDataService;
 import org.dpppt.backend.sdk.data.radarcovid.gaen.SpanishJDBCGAENDataServiceImpl;
 import org.dpppt.backend.sdk.ws.controller.GaenController;
 import org.dpppt.backend.sdk.ws.controller.GaenV2Controller;
+import org.dpppt.backend.sdk.ws.controller.GaenV2UMAController;
 import org.dpppt.backend.sdk.ws.filter.ResponseWrapperFilter;
 import org.dpppt.backend.sdk.ws.insertmanager.InsertManager;
 import org.dpppt.backend.sdk.ws.insertmanager.insertionfilters.*;
@@ -238,7 +239,7 @@ public abstract class WSBaseConfig implements WebMvcConfigurer {
     var manager = new InsertManager(gaenDataService(), gaenValidationUtils());
     manager.addFilter(new AssertKeyFormat(gaenValidationUtils()));
     manager.addFilter(new EnforceMatchingJWTClaimsForExposed(gaenRequestValidator));
-    manager.addFilter(new RemoveKeysFromFuture());
+    //manager.addFilter(new RemoveKeysFromFuture());
     manager.addFilter(new EnforceRetentionPeriod(gaenValidationUtils()));
     manager.addFilter(new RemoveFakeKeys());
     manager.addFilter(new EnforceValidRollingPeriod());
@@ -353,6 +354,25 @@ public abstract class WSBaseConfig implements WebMvcConfigurer {
         Duration.ofMillis(requestTime),
         Duration.ofMillis(exposedListCacheControl),
         Duration.ofDays(retentionDays));
+  }
+
+  @Bean
+  public GaenV2UMAController gaenV2UMAController() {
+    ValidateRequest theValidator = gaenRequestValidator;
+    if (theValidator == null) {
+      theValidator = backupValidator();
+    }
+    return new GaenV2UMAController(
+            insertManagerExposed(),
+            theValidator,
+            gaenValidationUtils(),
+            fakeKeyService(),
+            gaenSigner(),
+            gaenDataService(),
+            Duration.ofMillis(releaseBucketDuration),
+            Duration.ofMillis(requestTime),
+            Duration.ofMillis(exposedListCacheControl),
+            Duration.ofDays(retentionDays));
   }
 
   @Bean

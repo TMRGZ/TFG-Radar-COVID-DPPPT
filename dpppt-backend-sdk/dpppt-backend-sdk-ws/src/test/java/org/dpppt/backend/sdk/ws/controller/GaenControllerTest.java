@@ -628,6 +628,8 @@ public class GaenControllerTest extends BaseControllerTest {
 
     String token =
         createToken(now.plusMinutes(5), now.getLocalDate().format(DateTimeFormatter.ISO_DATE));
+
+    System.out.println(json(exposeeRequest));
     MvcResult response =
         mockMvc
             .perform(
@@ -894,6 +896,8 @@ public class GaenControllerTest extends BaseControllerTest {
     tmpKey.setFake(0);
     tmpKey.setTransmissionRiskLevel(0);
     secondDay.setDelayedKey(tmpKey);
+
+    System.out.println(json(secondDay));
     responseAsync =
         mockMvc
             .perform(
@@ -902,6 +906,7 @@ public class GaenControllerTest extends BaseControllerTest {
                     .header("Authorization", "Bearer " + jwtString)
                     .header("User-Agent", androidUserAgent)
                     .content(json(secondDay)))
+
             .andExpect(request().asyncStarted())
             .andReturn();
     mockMvc.perform(asyncDispatch(responseAsync)).andExpect(status().is(200));

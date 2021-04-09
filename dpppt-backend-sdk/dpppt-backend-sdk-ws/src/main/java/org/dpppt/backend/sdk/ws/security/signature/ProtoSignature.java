@@ -9,6 +9,8 @@
  */
 package org.dpppt.backend.sdk.ws.security.signature;
 
+import com.duprasville.guava.probably.CuckooFilter;
+import com.google.common.hash.Funnels;
 import com.google.protobuf.ByteString;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -35,6 +37,7 @@ import org.dpppt.backend.sdk.model.gaen.proto.TemporaryExposureKeyFormat;
 import org.dpppt.backend.sdk.model.gaen.proto.TemporaryExposureKeyFormat.SignatureInfo;
 import org.dpppt.backend.sdk.model.gaen.proto.v2.TemporaryExposureKeyFormatV2;
 import org.dpppt.backend.sdk.utils.UTCInstant;
+import org.springframework.util.SerializationUtils;
 
 public class ProtoSignature {
 
@@ -180,6 +183,76 @@ public class ProtoSignature {
     hashOut.close();
 
     return new ProtoSignatureWrapper(hashOut.toByteArray(), byteOut.toByteArray());
+  }
+
+  public ProtoSignatureWrapper getPayloadV2UMA(List<GaenKey> keys)
+          throws IOException, InvalidKeyException, SignatureException, NoSuchAlgorithmException {
+    if (keys.isEmpty()) {
+      throw new IOException("Keys should not be empty");
+    }
+    // Apple likes to have keys shuffled. See
+    // https://developer.apple.com/documentation/exposurenotification/setting_up_a_key_server
+    // This prevents the clients to know the order of arrival of the keys.
+    Collections.shuffle(keys);
+
+    ByteArrayOutputStream byteOut = new ByteArrayOutputStream();
+    ZipOutputStream zip = new ZipOutputStream(byteOut);
+    ByteArrayOutputStream hashOut = new ByteArrayOutputStream();
+    var digest = MessageDigest.getInstance("SHA256");
+    var keyDate = Duration.of(keys.get(0).getRollingStartNumber(), GaenUnit.TenMinutes);
+    var protoFile = getProtoKeyV2(keys, keyDate);
+
+    zip.putNextEntry(new ZipEntry("export.bin"));
+    byte[] protoCuckooFileBytes = protoToCuckooFilter(protoFile);
+    byte[] exportBin = new byte[EXPORT_MAGIC.length + protoCuckooFileBytes.length];
+    System.arraycopy(EXPORT_MAGIC, 0, exportBin, 0, EXPORT_MAGIC.length);
+    System.arraycopy(protoCuckooFileBytes, 0, exportBin, EXPORT_MAGIC.length, protoCuckooFileBytes.length);
+    zip.write(exportBin);
+    zip.closeEntry();
+
+    var signatureList = getSignatureObjectV2(exportBin);
+    digest.update(exportBin);
+    digest.update(keyPair.getPublic().getEncoded());
+    hashOut.write(digest.digest());
+
+    byte[] exportSig = signatureList.toByteArray();
+    zip.putNextEntry(new ZipEntry("export.sig"));
+    zip.write(exportSig);
+    zip.closeEntry();
+
+    zip.flush();
+    zip.close();
+    byteOut.flush();
+    byteOut.close();
+    hashOut.flush();
+    hashOut.close();
+
+    return new ProtoSignatureWrapper(hashOut.toByteArray(), byteOut.toByteArray());
+  }
+
+  private byte[] protoToCuckooFilter(TemporaryExposureKeyFormatV2.TemporaryExposureKeyExport protoFile){
+    CuckooFilter<byte[]> cuckooFilter = CuckooFilter.create(Funnels.byteArrayFunnel(), protoFile.getKeysCount());
+
+    for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : protoFile.getKeysList()) {
+      cuckooFilter.add(temporaryExposureKey.toByteArray());
+    }
+
+    // PEQUEÑA PRUEBA DE FUNCIONAMIENTO
+    var filtroBytes = SerializationUtils.serialize(cuckooFilter);
+    var filtroDesdeBytes = (CuckooFilter<byte[]>)SerializationUtils.deserialize(filtroBytes);
+
+    for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : protoFile.getKeysList()) {
+      if (filtroDesdeBytes.contains(temporaryExposureKey.toByteArray())){
+        System.out.println("Key dentro del filtro");
+        System.out.println(temporaryExposureKey);
+      }
+    }
+
+
+    //////////////////////////
+
+
+    return SerializationUtils.serialize(cuckooFilter);
   }
 
   private byte[] sign(byte[] data)

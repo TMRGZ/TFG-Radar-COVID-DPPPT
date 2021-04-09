@@ -187,7 +187,14 @@
 			<artifactId>shedlock-spring</artifactId>
 		</dependency>
 
-	</dependencies>
+		<!-- https://mvnrepository.com/artifact/com.duprasville.guava/guava-probably -->
+		<dependency>
+            <groupId>com.duprasville.guava.guava-probably</groupId>
+            <artifactId>guava-probably</artifactId>
+            <version>1.0</version>
+        </dependency>
+
+    </dependencies>
 
 	<build>
 		<finalName>

@@ -259,6 +259,8 @@ public class GaenV2ControllerTest extends BaseControllerTest {
 
     String keyBundleTag;
 
+    System.out.println(json(uploadPayload));
+
     try (var timeLock =
         UTCInstant.setClock(Clock.fixed(keyReleaseTime.getInstant(), ZoneOffset.UTC))) {
       MvcResult responseAsync =

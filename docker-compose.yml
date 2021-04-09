@@ -15,7 +15,7 @@ services:
       DATASOURCE_SCHEMA: public
       DATASOURCE_FLYWAY_LOAD: 'false'
     ports:
-      - 8082:8080
+      - 8080:8080
     depends_on:
       - postgres
     networks:
