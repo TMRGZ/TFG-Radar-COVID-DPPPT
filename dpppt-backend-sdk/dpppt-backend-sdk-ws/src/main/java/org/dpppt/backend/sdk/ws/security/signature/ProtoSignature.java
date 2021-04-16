@@ -238,7 +238,7 @@ public class ProtoSignature {
     }
 
     // PEQUEÑA PRUEBA DE FUNCIONAMIENTO
-    var filtroBytes = SerializationUtils.serialize(cuckooFilter);
+    /*var filtroBytes = SerializationUtils.serialize(cuckooFilter);
     var filtroDesdeBytes = (CuckooFilter<byte[]>)SerializationUtils.deserialize(filtroBytes);
 
     for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : protoFile.getKeysList()) {
@@ -246,7 +246,7 @@ public class ProtoSignature {
         System.out.println("Key dentro del filtro");
         System.out.println(temporaryExposureKey);
       }
-    }
+    }*/
 
 
     //////////////////////////

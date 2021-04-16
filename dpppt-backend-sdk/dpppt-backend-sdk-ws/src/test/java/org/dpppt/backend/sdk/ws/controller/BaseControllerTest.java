@@ -19,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import com.duprasville.guava.probably.CuckooFilter;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
@@ -47,6 +48,7 @@ import java.util.zip.ZipInputStream;
 import javax.servlet.Filter;
 import javax.sql.DataSource;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.SerializationUtils;
 import org.dpppt.backend.sdk.data.gaen.GAENDataService;
 import org.dpppt.backend.sdk.model.gaen.GaenKey;
 import org.dpppt.backend.sdk.model.gaen.GaenRequest;
@@ -344,6 +346,20 @@ public abstract class BaseControllerTest {
     }
   }
 
+  protected void verifyZipInZipResponse(
+          MockHttpServletResponse response, int expectKeyCount)
+          throws Exception {
+    ByteArrayInputStream baisOuter = new ByteArrayInputStream(response.getContentAsByteArray());
+    ZipInputStream zipOuter = new ZipInputStream(baisOuter);
+    ZipEntry entry = zipOuter.getNextEntry();
+    while (entry != null) {
+      ZipInputStream zipInner =
+              new ZipInputStream(new ByteArrayInputStream(zipOuter.readAllBytes()));
+      verifyFilterZip(zipInner, expectKeyCount);
+      entry = zipOuter.getNextEntry();
+    }
+  }
+
   /**
    * Fetches the keys in a zip file returned from a `/v1/gaen/exposed` response.
    *
@@ -373,6 +389,36 @@ public abstract class BaseControllerTest {
     return TemporaryExposureKeyExport.parseFrom(keyProto);
   }
 
+
+  /**
+   * Fetches the CuckooFilter in a zip file returned from a `/v2UMA/gaen/exposed` response.
+   *
+   * @param response holding a zip file with the filter
+   * @return the filter in the zip file
+   * @throws IOException
+   */
+  protected CuckooFilter<byte[]> getZipCuckooFilter(MockHttpServletResponse response)
+          throws IOException {
+    ByteArrayInputStream baisZip = new ByteArrayInputStream(response.getContentAsByteArray());
+    ZipInputStream keyZipInputstream = new ZipInputStream(baisZip);
+    ZipEntry entry = keyZipInputstream.getNextEntry();
+
+    byte[] exportBin;
+    byte[] keyProto = null;
+
+    while (entry != null) {
+      if (entry.getName().equals("export.bin")) {
+        exportBin = keyZipInputstream.readAllBytes();
+        keyProto = new byte[exportBin.length - 16];
+        System.arraycopy(exportBin, 16, keyProto, 0, keyProto.length);
+      }
+      entry = keyZipInputstream.getNextEntry();
+    }
+
+    assertNotNull(keyProto);
+    return SerializationUtils.deserialize(keyProto);
+  }
+
   /** Verifies a zip response, checks if keys and signature is correct. */
   protected void verifyZipResponse(
       MockHttpServletResponse response, int expectKeyCount, int expectedRollingPeriod)
@@ -380,6 +426,15 @@ public abstract class BaseControllerTest {
     ByteArrayInputStream baisZip = new ByteArrayInputStream(response.getContentAsByteArray());
     ZipInputStream keyZipInputstream = new ZipInputStream(baisZip);
     verifyKeyZip(keyZipInputstream, expectKeyCount, expectedRollingPeriod);
+  }
+
+  /** Verifies a zip response, checks if filter and signature is correct. */
+  protected void verifyZipResponse(
+          MockHttpServletResponse response, int expectKeyCount)
+          throws IOException, NoSuchAlgorithmException, InvalidKeyException, SignatureException {
+    ByteArrayInputStream baisZip = new ByteArrayInputStream(response.getContentAsByteArray());
+    ZipInputStream keyZipInputstream = new ZipInputStream(baisZip);
+    verifyFilterZip(keyZipInputstream, expectKeyCount);
   }
 
   protected void verifyKeyZip(
@@ -426,4 +481,49 @@ public abstract class BaseControllerTest {
         "Could not verify signature in zip file");
     assertEquals(expectKeyCount, export.getKeysCount());
   }
+
+  protected void verifyFilterZip(
+          ZipInputStream keyZipInputstream, int expectKeyCount)
+          throws IOException, NoSuchAlgorithmException, InvalidKeyException, SignatureException {
+    ZipEntry entry = keyZipInputstream.getNextEntry();
+    boolean foundData = false;
+    boolean foundSignature = false;
+
+    byte[] signatureProto = null;
+    byte[] exportBin = null;
+    byte[] keyProto = null;
+
+    while (entry != null) {
+      if (entry.getName().equals("export.bin")) {
+        foundData = true;
+        exportBin = keyZipInputstream.readAllBytes();
+        keyProto = new byte[exportBin.length - 16];
+        System.arraycopy(exportBin, 16, keyProto, 0, keyProto.length);
+      }
+      if (entry.getName().equals("export.sig")) {
+        foundSignature = true;
+        signatureProto = keyZipInputstream.readAllBytes();
+      }
+      entry = keyZipInputstream.getNextEntry();
+    }
+
+    assertTrue(foundData, "export.bin not found in zip");
+    assertTrue(foundSignature, "export.sig not found in zip");
+
+    TEKSignatureList list = TEKSignatureList.parseFrom(signatureProto);
+    //TemporaryExposureKeyExport export = TemporaryExposureKeyExport.parseFrom(keyProto);
+    CuckooFilter<byte[]> export = SerializationUtils.deserialize(keyProto);
+
+    var sig = list.getSignatures(0);
+    java.security.Signature signatureVerifier =
+            java.security.Signature.getInstance(sig.getSignatureInfo().getSignatureAlgorithm().trim());
+    signatureVerifier.initVerify(signer.getPublicKey());
+
+    signatureVerifier.update(exportBin);
+    assertTrue(
+            signatureVerifier.verify(sig.getSignature().toByteArray()),
+            "Could not verify signature in zip file");
+    assertEquals(expectKeyCount, export.size());
+  }
+
 }
