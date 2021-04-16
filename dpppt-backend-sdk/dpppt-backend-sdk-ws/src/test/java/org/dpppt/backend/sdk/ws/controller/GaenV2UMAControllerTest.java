@@ -65,55 +65,6 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
 
   private static final Logger logger = LoggerFactory.getLogger(GaenV2UMAControllerTest.class);
 
-
-  @Test
-  @Transactional
-  public void zipContainsFilter() throws Exception {
-    var midnight = UTCInstant.today();
-
-    // Insert two times 5 keys per day for the last 14 days. the second batch has a
-    // different 'received at' timestamp. (+12 hours compared to the first)
-
-    insertNKeysPerDay(midnight, 14, 5, midnight.minusDays(1), false);
-    insertNKeysPerDay(midnight, 14, 5, midnight.minusHours(12), false);
-
-    // request the keys with key date 8 days ago. no publish until.
-    MockHttpServletResponse response =
-            mockMvc
-                    .perform(
-                            get("/v2UMA/gaen/exposed"+ midnight.minusDays(8).getTimestamp())
-                                    .header("User-Agent", "MockMVC"))
-                    .andExpect(status().is2xxSuccessful())
-                    .andReturn()
-                    .getResponse();
-
-    /*Long publishedUntil = Long.parseLong(response.getHeader("X-PUBLISHED-UNTIL"));
-    assertTrue(
-            publishedUntil <= UTCInstant.now().getTimestamp(), "Published until must be in the past");*/
-
-    // must contain 20 keys: 5 from the first insert, 5 from the second insert and
-    // 10 random keys
-    verifyZipResponse(response, 20);
-
-    // request again the keys with date date 8 days ago. with publish until, so that
-    // we only get the second batch.
-    var bucketAfterSecondRelease = midnight.minusHours(12);
-
-    MockHttpServletResponse responseWithPublishedAfter =
-            mockMvc
-                    .perform(
-                            get("/v2UMA/gaen/exposed?lastKeyBundleTag=" + midnight.minusDays(8).getTimestamp())
-                                    .header("User-Agent", "MockMVC")
-                                    .param(
-                                            "publishedafter", Long.toString(bucketAfterSecondRelease.getTimestamp())))
-                    .andExpect(status().is2xxSuccessful())
-                    .andReturn()
-                    .getResponse();
-
-    // must contain 15 keys: 5 from the second insert and 10 random keys
-    verifyZipResponse(responseWithPublishedAfter, 15);
-  }
-
   @Test
   public void testHello() throws Exception {
     MockHttpServletResponse response =
@@ -368,6 +319,56 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
               .andReturn()
               .getResponse();
     }
+  }
+
+  @Test
+  @Transactional
+  public void zipContainsFilter() throws Exception {
+    var midnight = UTCInstant.today();
+
+    // Insert two times 5 keys per day for the last 14 days. the second batch has a
+    // different 'received at' timestamp. (+12 hours compared to the first)
+    insertNKeysPerDay(midnight, 14, 5, midnight.minusDays(1), false);
+
+    // request the keys with key date 8 days ago. no publish until.
+    MockHttpServletResponse response =
+            mockMvc
+                    .perform(
+                            get("/v2UMA/gaen/exposed")
+                                    .header("User-Agent", "MockMVC"))
+                    .andExpect(status().is2xxSuccessful())
+                    .andReturn()
+                    .getResponse();
+
+    /*Long publishedUntil = Long.parseLong(response.getHeader("X-PUBLISHED-UNTIL"));
+    assertTrue(
+            publishedUntil <= UTCInstant.now().getTimestamp(), "Published until must be in the past");*/
+
+    // must contain 65 keys: 14 days back * 5 keys per day - 5 keys discarded
+    verifyZipResponse(response, 65);
+
+    // request again the keys with date date 8 days ago. with publish until, so that
+    // we only get the second batch.
+    var bucketAfterSecondRelease = midnight.minusHours(12);
+
+    // Second insertion
+    insertNKeysPerDay(midnight, 14, 5, midnight.minusHours(12), false);
+
+    MockHttpServletResponse responseWithPublishedAfter =
+            mockMvc
+                    .perform(
+                            get("/v2UMA/gaen/exposed")
+                                    .header("User-Agent", "MockMVC")
+                                    .param(
+                                            "publishedafter", Long.toString(bucketAfterSecondRelease.getTimestamp())))
+                    .andExpect(status().is2xxSuccessful())
+                    .andReturn()
+                    .getResponse();
+
+
+
+    // must contain 130, 2 times the last time
+    verifyZipResponse(responseWithPublishedAfter, 130);
   }
 
   /**
