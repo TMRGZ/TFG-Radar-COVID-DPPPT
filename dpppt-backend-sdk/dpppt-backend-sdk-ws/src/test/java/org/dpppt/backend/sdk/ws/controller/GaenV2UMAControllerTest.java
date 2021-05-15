@@ -10,10 +10,14 @@
 
 package org.dpppt.backend.sdk.ws.controller;
 
+import com.duprasville.guava.probably.CuckooFilter;
+import com.google.protobuf.ByteString;
 import org.dpppt.backend.sdk.data.gaen.GAENDataService;
 import org.dpppt.backend.sdk.model.gaen.GaenKey;
 import org.dpppt.backend.sdk.model.gaen.GaenRequest;
+import org.dpppt.backend.sdk.model.gaen.GaenUnit;
 import org.dpppt.backend.sdk.model.gaen.GaenV2UploadKeysRequest;
+import org.dpppt.backend.sdk.model.gaen.proto.v2.TemporaryExposureKeyFormatV2;
 import org.dpppt.backend.sdk.utils.UTCInstant;
 import org.dpppt.backend.sdk.ws.security.KeyVault;
 import org.dpppt.backend.sdk.ws.security.signature.ProtoSignature;
@@ -28,6 +32,8 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
+import javax.validation.constraints.AssertTrue;
+import java.io.IOException;
 import java.security.SecureRandom;
 import java.time.Clock;
 import java.time.Duration;
@@ -36,8 +42,7 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.List;
 
-import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertNotNull;
+import static org.junit.Assert.*;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.request;
@@ -371,16 +376,125 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
     verifyZipResponse(responseWithPublishedAfter, 130);
   }
 
+  @Test
+  @Transactional
+  public void clientUseCase() throws Exception {
+    var midnight = UTCInstant.today();
+
+    // Insert One key that is infected
+    List<GaenKey> infectedList = insertNKeysPerDay(midnight, 2, 1, midnight.minusDays(1), false);
+
+    // request the keys with key date 8 days ago. no publish until.
+    MockHttpServletResponse response =
+            mockMvc
+                    .perform(
+                            get("/v2UMA/gaen/exposed")
+                                    .header("User-Agent", "MockMVC"))
+                    .andExpect(status().is2xxSuccessful())
+                    .andReturn()
+                    .getResponse();
+
+
+
+    // Verify that there is one key in DB
+    verifyZipResponse(response, 1);
+
+    // Received a non infected GaenKey
+    SecureRandom random = new SecureRandom();
+    var currentKeyDate = midnight.minusDays(1);
+    int currentRollingStartNumber = (int) currentKeyDate.get10MinutesSince1970();
+    GaenKey notInfectedKey = new GaenKey();
+    byte[] keyBytes = new byte[16];
+    random.nextBytes(keyBytes);
+    notInfectedKey.setKeyData(Base64.getEncoder().encodeToString(keyBytes));
+    notInfectedKey.setRollingPeriod(144);
+    notInfectedKey.setRollingStartNumber(currentRollingStartNumber);
+    notInfectedKey.setTransmissionRiskLevel(1);
+    notInfectedKey.setFake(0);
+
+    List<GaenKey> notInfectedList = new ArrayList<>();
+    notInfectedList.add(notInfectedKey);
+
+
+    // Get the filter with contact
+    CuckooFilter<byte[]> receivedContacts = getZipCuckooFilter(response);
+
+    // Not infected key is not in the filter
+    for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : getTemporaryKeyFromGaen(notInfectedList)) {
+      assertFalse(receivedContacts.contains(temporaryExposureKey.toByteArray()));
+    }
+
+
+    // Infected key is in the filter
+    for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : getTemporaryKeyFromGaen(infectedList)) {
+      assertTrue(receivedContacts.contains(temporaryExposureKey.toByteArray()));
+    }
+
+    // The not infected key now is infected
+    GaenV2UploadKeysRequest exposeeRequest = new GaenV2UploadKeysRequest();
+    exposeeRequest.setGaenKeys(notInfectedList);
+    var uploadPayload = exposeeRequest;
+    testGaenDataService.upsertExposees(notInfectedList, midnight.minusDays(1));
+
+    response =
+            mockMvc
+                    .perform(
+                            get("/v2UMA/gaen/exposed")
+                                    .header("User-Agent", "MockMVC"))
+                    .andExpect(status().is2xxSuccessful())
+                    .andReturn()
+                    .getResponse();
+
+    // Verify that there is two keys in DB
+    verifyZipResponse(response, 2);
+
+    // Get new filter with infected key and previously not infected key
+    receivedContacts = getZipCuckooFilter(response);
+
+    for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : getTemporaryKeyFromGaen(notInfectedList)) {
+      assertTrue(receivedContacts.contains(temporaryExposureKey.toByteArray()));
+    }
+
+  }
+
+  private List<TemporaryExposureKeyFormatV2.TemporaryExposureKey> getTemporaryKeyFromGaen(List<GaenKey> keys){
+    var keyDate = Duration.of(keys.get(0).getRollingStartNumber(), GaenUnit.TenMinutes);
+    var protoFile = getProtoKeyV2(keys, keyDate);
+
+    return protoFile.getKeysList();
+  }
+
+  private TemporaryExposureKeyFormatV2.TemporaryExposureKeyExport getProtoKeyV2(List<GaenKey> exposedKeys, Duration keyDate) {
+    var file = TemporaryExposureKeyFormatV2.TemporaryExposureKeyExport.newBuilder();
+
+    var tekList = new ArrayList<TemporaryExposureKeyFormatV2.TemporaryExposureKey>();
+    for (var key : exposedKeys) {
+      var protoKey =
+              TemporaryExposureKeyFormatV2.TemporaryExposureKey.newBuilder()
+                      .setKeyData(ByteString.copyFrom(Base64.getDecoder().decode(key.getKeyData())))
+                      .setRollingPeriod(key.getRollingPeriod())
+                      .setRollingStartIntervalNumber(key.getRollingStartNumber())
+                      .setDaysSinceOnsetOfSymptoms(0) // hardcode to zero
+                      .build();
+      tekList.add(protoKey);
+    }
+
+    file.addAllKeys(tekList);
+
+    return file.build();
+  }
+
   /**
    * Creates keysPerDay for every day: lastDay, lastDay-1, ..., lastDay - daysBack + 1
-   *  @param lastDay of the created keys
+   * @param lastDay of the created keys
    * @param daysBack of the key creation, counted including the lastDay
    * @param keysPerDay that will be created for every day
    * @param receivedAt as sent to the DB
    * @param debug if true, inserts the keys in the debug table.
+   * @return
    */
-  private void insertNKeysPerDay(
-          UTCInstant lastDay, int daysBack, int keysPerDay, UTCInstant receivedAt, boolean debug) {
+  private List<GaenKey> insertNKeysPerDay(
+          UTCInstant lastDay, int daysBack, int keysPerDay, UTCInstant receivedAt, boolean debug) throws IOException {
     SecureRandom random = new SecureRandom();
     List<GaenKey> keys = null;
     for (int d = 0; d < daysBack; d++) {
@@ -401,9 +515,14 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
       if (debug) {
         testGaenDataService.upsertExposeesDebug(keys, receivedAt);
       } else {
+        GaenV2UploadKeysRequest exposeeRequest = new GaenV2UploadKeysRequest();
+        exposeeRequest.setGaenKeys(keys);
+        var uploadPayload = exposeeRequest;
+        //System.out.println(json(uploadPayload));
         testGaenDataService.upsertExposees(keys, receivedAt);
       }
     }
+    return keys;
   }
 
 }

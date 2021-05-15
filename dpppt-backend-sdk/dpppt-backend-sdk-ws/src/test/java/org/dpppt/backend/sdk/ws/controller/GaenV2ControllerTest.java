@@ -256,6 +256,7 @@ public class GaenV2ControllerTest extends BaseControllerTest {
     }
 
     String token = createToken(UTCInstant.now().plusMinutes(5));
+    System.out.println(token);
 
     String keyBundleTag;
 
