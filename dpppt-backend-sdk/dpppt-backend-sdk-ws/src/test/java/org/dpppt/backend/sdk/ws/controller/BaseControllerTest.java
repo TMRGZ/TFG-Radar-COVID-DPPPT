@@ -52,8 +52,10 @@ import org.apache.commons.lang3.SerializationUtils;
 import org.dpppt.backend.sdk.data.gaen.GAENDataService;
 import org.dpppt.backend.sdk.model.gaen.GaenKey;
 import org.dpppt.backend.sdk.model.gaen.GaenRequest;
+import org.dpppt.backend.sdk.model.gaen.proto.TemporaryExposureKeyFormat;
 import org.dpppt.backend.sdk.model.gaen.proto.TemporaryExposureKeyFormat.TEKSignatureList;
 import org.dpppt.backend.sdk.model.gaen.proto.TemporaryExposureKeyFormat.TemporaryExposureKeyExport;
+import org.dpppt.backend.sdk.model.gaen.proto.v2.TemporaryExposureKeyFormatV2;
 import org.dpppt.backend.sdk.utils.UTCInstant;
 import org.dpppt.backend.sdk.ws.filter.ResponseWrapperFilter;
 import org.dpppt.backend.sdk.ws.security.KeyVault;
@@ -387,6 +389,35 @@ public abstract class BaseControllerTest {
 
     assertNotNull(keyProto);
     return TemporaryExposureKeyExport.parseFrom(keyProto);
+  }
+
+  /**
+   * Fetches the keys in a zip file returned from a `/v2/gaen/exposed` response.
+   *
+   * @param response holding a zip file with the keys
+   * @return the keys in the zip file
+   * @throws IOException
+   */
+  protected TemporaryExposureKeyFormatV2.TemporaryExposureKeyExport getZipKeysV2(MockHttpServletResponse response)
+          throws IOException {
+    ByteArrayInputStream baisZip = new ByteArrayInputStream(response.getContentAsByteArray());
+    ZipInputStream keyZipInputstream = new ZipInputStream(baisZip);
+    ZipEntry entry = keyZipInputstream.getNextEntry();
+
+    byte[] exportBin;
+    byte[] keyProto = null;
+
+    while (entry != null) {
+      if (entry.getName().equals("export.bin")) {
+        exportBin = keyZipInputstream.readAllBytes();
+        keyProto = new byte[exportBin.length - 16];
+        System.arraycopy(exportBin, 16, keyProto, 0, keyProto.length);
+      }
+      entry = keyZipInputstream.getNextEntry();
+    }
+
+    assertNotNull(keyProto);
+    return TemporaryExposureKeyFormatV2.TemporaryExposureKeyExport.parseFrom(keyProto);
   }
 
 

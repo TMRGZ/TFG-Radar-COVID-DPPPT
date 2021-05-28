@@ -12,11 +12,13 @@ package org.dpppt.backend.sdk.ws.controller;
 
 import com.duprasville.guava.probably.CuckooFilter;
 import com.google.protobuf.ByteString;
+import com.jayway.jsonpath.internal.function.numeric.Average;
 import org.dpppt.backend.sdk.data.gaen.GAENDataService;
 import org.dpppt.backend.sdk.model.gaen.GaenKey;
 import org.dpppt.backend.sdk.model.gaen.GaenRequest;
 import org.dpppt.backend.sdk.model.gaen.GaenUnit;
 import org.dpppt.backend.sdk.model.gaen.GaenV2UploadKeysRequest;
+import org.dpppt.backend.sdk.model.gaen.proto.TemporaryExposureKeyFormat;
 import org.dpppt.backend.sdk.model.gaen.proto.v2.TemporaryExposureKeyFormatV2;
 import org.dpppt.backend.sdk.utils.UTCInstant;
 import org.dpppt.backend.sdk.ws.security.KeyVault;
@@ -39,8 +41,10 @@ import java.time.Clock;
 import java.time.Duration;
 import java.time.ZoneOffset;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
+import java.util.stream.LongStream;
 
 import static org.junit.Assert.*;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -427,6 +431,7 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
 
     // Infected key is in the filter
     for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : getTemporaryKeyFromGaen(infectedList)) {
+      System.out.println(Arrays.toString(temporaryExposureKey.toByteArray()));
       assertTrue(receivedContacts.contains(temporaryExposureKey.toByteArray()));
     }
 
@@ -454,6 +459,89 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
     for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : getTemporaryKeyFromGaen(notInfectedList)) {
       assertTrue(receivedContacts.contains(temporaryExposureKey.toByteArray()));
     }
+
+  }
+
+  @Test
+  public void mockApp() {
+    var now = UTCInstant.now();
+
+    String token = createToken(now.plusMinutes(15));
+    System.out.println(token);
+  }
+
+  @Test
+  public void perfomanceTestVsV2() throws Exception {
+    var midnight = UTCInstant.today();
+
+    insertNKeysPerDay(midnight, 10, 1000, midnight.minusDays(1), false);
+
+
+    List<GaenKey> referenceList = insertNKeysPerDay(midnight, 2, 1, midnight.minusDays(1), false);
+    TemporaryExposureKeyFormatV2.TemporaryExposureKey referenceKey = getTemporaryKeyFromGaen(referenceList).get(0);
+    byte[] referenceKeyBytes = referenceKey.toByteArray();
+
+
+    MockHttpServletResponse responseV2UMA =
+            mockMvc
+                    .perform(
+                            get("/v2UMA/gaen/exposed")
+                                    .header("User-Agent", "MockMVC"))
+                    .andExpect(status().is2xxSuccessful())
+                    .andReturn()
+                    .getResponse();
+
+    CuckooFilter<byte[]> receivedContactsV2UMA = getZipCuckooFilter(responseV2UMA);
+
+
+    MockHttpServletResponse responseV2 =
+            mockMvc
+                    .perform(
+                            get("/v2/gaen/exposed")
+                                    .header("User-Agent", "MockMVC"))
+                    .andExpect(status().is2xxSuccessful())
+                    .andReturn()
+                    .getResponse();
+
+    TemporaryExposureKeyFormatV2.TemporaryExposureKeyExport receivedContactsV2 = getZipKeysV2(responseV2);
+
+
+
+    // Compare execution times
+    List<Long> executionV2UMA = new ArrayList<>();
+    List<Long> executionV2 = new ArrayList<>();
+
+    for (int i = 0; i < 1000; i++) {
+      long startTime = System.nanoTime();
+
+      if (i == 0) {
+        assertTrue(receivedContactsV2UMA.contains(referenceKeyBytes));
+      } else {
+        receivedContactsV2UMA.contains(referenceKeyBytes);
+      }
+
+      long elapsedTime = System.nanoTime() - startTime;
+      executionV2UMA.add(elapsedTime);
+    }
+
+     List<TemporaryExposureKeyFormatV2.TemporaryExposureKey> list = receivedContactsV2.getKeysList();
+    for (int i = 0; i < 1000; i++) {
+      long startTime = System.nanoTime();
+
+      if (i == 0) {
+        assertTrue(list.contains(referenceKey));
+      } else {
+        list.contains(referenceKey);
+      }
+
+      long elapsedTime = System.nanoTime() - startTime;
+      executionV2.add(elapsedTime);
+    }
+
+    System.out.println("MEDIA DE TIEMPO USANDO FILTRO: " + executionV2UMA.stream().mapToDouble(d -> d).average().orElse(0));
+    System.out.println("MEDIA DE TIEMPO USANDO LISTAS: " + executionV2.stream().mapToDouble(d -> d).average().orElse(0) );
+
+
 
   }
 

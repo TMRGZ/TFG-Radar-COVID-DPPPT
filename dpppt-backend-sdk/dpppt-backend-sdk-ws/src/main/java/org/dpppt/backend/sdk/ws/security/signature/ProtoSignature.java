@@ -22,13 +22,7 @@ import java.security.PublicKey;
 import java.security.Signature;
 import java.security.SignatureException;
 import java.time.Duration;
-import java.util.ArrayList;
-import java.util.Base64;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 import org.dpppt.backend.sdk.model.gaen.GaenKey;
@@ -156,6 +150,12 @@ public class ProtoSignature {
     var digest = MessageDigest.getInstance("SHA256");
     var keyDate = Duration.of(keys.get(0).getRollingStartNumber(), GaenUnit.TenMinutes);
     var protoFile = getProtoKeyV2(keys, keyDate);
+
+    if (true) {
+      for (TemporaryExposureKeyFormatV2.TemporaryExposureKey temporaryExposureKey : protoFile.getKeysList()) {
+        System.out.println(Arrays.toString(temporaryExposureKey.toByteArray()));
+      }
+    }
 
     zip.putNextEntry(new ZipEntry("export.bin"));
     byte[] protoFileBytes = protoFile.toByteArray();
