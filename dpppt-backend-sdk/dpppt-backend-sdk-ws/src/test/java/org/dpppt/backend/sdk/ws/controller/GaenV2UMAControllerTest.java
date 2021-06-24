@@ -13,6 +13,7 @@ package org.dpppt.backend.sdk.ws.controller;
 import com.duprasville.guava.probably.CuckooFilter;
 import com.google.protobuf.ByteString;
 import com.jayway.jsonpath.internal.function.numeric.Average;
+import com.opencsv.CSVWriter;
 import org.dpppt.backend.sdk.data.gaen.GAENDataService;
 import org.dpppt.backend.sdk.model.gaen.GaenKey;
 import org.dpppt.backend.sdk.model.gaen.GaenRequest;
@@ -35,6 +36,7 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
 
 import javax.validation.constraints.AssertTrue;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.security.SecureRandom;
 import java.time.Clock;
@@ -518,10 +520,9 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
         assertTrue(receivedContactsV2UMA.contains(referenceKeyBytes));
       } else {
         receivedContactsV2UMA.contains(referenceKeyBytes);
+        long elapsedTime = System.nanoTime() - startTime;
+        executionV2UMA.add(elapsedTime);
       }
-
-      long elapsedTime = System.nanoTime() - startTime;
-      executionV2UMA.add(elapsedTime);
     }
 
      List<TemporaryExposureKeyFormatV2.TemporaryExposureKey> list = receivedContactsV2.getKeysList();
@@ -532,15 +533,34 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
         assertTrue(list.contains(referenceKey));
       } else {
         list.contains(referenceKey);
+        long elapsedTime = System.nanoTime() - startTime;
+        executionV2.add(elapsedTime);
       }
 
-      long elapsedTime = System.nanoTime() - startTime;
-      executionV2.add(elapsedTime);
+
     }
 
     System.out.println("MEDIA DE TIEMPO USANDO FILTRO: " + executionV2UMA.stream().mapToDouble(d -> d).average().orElse(0));
     System.out.println("MEDIA DE TIEMPO USANDO LISTAS: " + executionV2.stream().mapToDouble(d -> d).average().orElse(0) );
 
+    CSVWriter writerFiltro = new CSVWriter(new FileWriter("RendimientoFiltro.csv"));
+    String[] headers = {"Ejecucion", "Tiempo"};
+    writerFiltro.writeNext(headers);
+
+    for (int i = 0; i < executionV2UMA.size(); i++) {
+      String[] data = { (i+1) + "", executionV2UMA.get(i).toString()};
+      writerFiltro.writeNext(data);
+    }
+    writerFiltro.close();
+
+    CSVWriter writerListas = new CSVWriter(new FileWriter("RendimientoListas.csv"));
+    writerListas.writeNext(headers);
+
+    for (int i = 0; i < executionV2.size(); i++) {
+      String[] data = { (i+1) + "", executionV2.get(i).toString()};
+      writerListas.writeNext(data);
+    }
+    writerListas.close();
 
 
   }
@@ -606,7 +626,7 @@ public class GaenV2UMAControllerTest extends BaseControllerTest {
         GaenV2UploadKeysRequest exposeeRequest = new GaenV2UploadKeysRequest();
         exposeeRequest.setGaenKeys(keys);
         var uploadPayload = exposeeRequest;
-        //System.out.println(json(uploadPayload));
+        System.out.println(json(uploadPayload));
         testGaenDataService.upsertExposees(keys, receivedAt);
       }
     }
